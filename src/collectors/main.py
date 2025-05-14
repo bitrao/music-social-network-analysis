@@ -1,167 +1,169 @@
-import asyncio
-import logging
-from datetime import datetime, timedelta
-from typing import Dict, Any, List
-import yaml
-from pathlib import Path
+"""
+Main Script for Social Media Data Collection and Network Analysis
+
+This script orchestrates the collection of social media data about songs and performs
+network analysis to understand the relationships between users, content, and platforms.
+
+The script will:
+1. Collect data from multiple platforms
+2. Save data in CSV format
+3. Create network visualizations
+4. Perform social network analysis
+
+Required Environment Variables:
+    X_API_KEY: X API key
+    X_API_SECRET: X API secret
+    YOUTUBE_API_KEY: YouTube Data API key
+    REDDIT_CLIENT_ID: Reddit API client ID
+    REDDIT_CLIENT_SECRET: Reddit API client secret
+    TIKTOK_MS_TOKEN: TikTok MS token
+
+Usage:
+    1. Set up environment variables (use .env file or export directly)
+    2. Run the script: python main.py
+    3. Enter the song identifier when prompted
+    4. Results will be saved in data/raw directory
+"""
+
 import os
+import asyncio
+from typing import Optional, Dict, Any
+from datetime import datetime
+from pathlib import Path
 from dotenv import load_dotenv
+import pandas as pd
 
-from .twitter_collector import TwitterCollector
-from .youtube_collector import YouTubeCollector
-from .reddit_collector import RedditCollector
-# Import other collectors as they are implemented
-# from .instagram_collector import InstagramCollector
-# from .youtube_collector import YouTubeCollector
-# etc.
+from collectors import (
+    collect_x_data,
+    collect_youtube_data,
+    collect_reddit_data,
+    collect_tiktok_data,
+    save_results,
+    analyze_network
+)
 
-class DataCollectionOrchestrator:
-    """Orchestrates data collection from multiple platforms."""
+async def collect_and_analyze(song_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Collect data about a song and perform network analysis.
     
-    def __init__(self, config_path: str = "config/data_sources.yaml"):
-        """
-        Initialize the orchestrator.
+    Args:
+        song_id (str): Identifier for the song
         
-        Args:
-            config_path (str): Path to configuration file
-        """
-        self.logger = logging.getLogger(__name__)
-        self.setup_logging()
-        self.load_config(config_path)
-        self.load_environment()
-        self.initialize_collectors()
-        
-    def setup_logging(self):
-        """Set up logging configuration."""
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    Returns:
+        Optional[Dict[str, Any]]: Analysis results and file paths
+    """
+    # Load environment variables
+    load_dotenv()
+    
+    # Verify environment variables
+    required_vars = [
+        'X_API_KEY',
+        'X_API_SECRET',
+        'YOUTUBE_API_KEY',
+        'REDDIT_CLIENT_ID',
+        'REDDIT_CLIENT_SECRET',
+        'TIKTOK_MS_TOKEN'
+    ]
+    
+    missing_vars = [var for var in required_vars if not os.getenv(var)]
+    if missing_vars:
+        print(f"Error: Missing required environment variables: {', '.join(missing_vars)}")
+        print("Please set them in your .env file or environment")
+        return None
+    
+    # Create collection tasks
+    print(f"\nStarting data collection for '{song_id}'...")
+    start_time = datetime.now()
+    
+    tasks = [
+        collect_x_data(
+            song_id,
+            os.getenv('X_API_KEY'),
+            os.getenv('X_API_SECRET')
+        ),
+        collect_youtube_data(
+            song_id,
+            os.getenv('YOUTUBE_API_KEY')
+        ),
+        collect_reddit_data(
+            song_id,
+            os.getenv('REDDIT_CLIENT_ID'),
+            os.getenv('REDDIT_CLIENT_SECRET')
+        ),
+        collect_tiktok_data(
+            song_id,
+            os.getenv('TIKTOK_MS_TOKEN')
         )
-        
-    def load_config(self, config_path: str):
-        """Load configuration from YAML file."""
-        with open(config_path, 'r') as f:
-            self.config = yaml.safe_load(f)
-            
-    def load_environment(self):
-        """Load environment variables."""
-        load_dotenv()
-        
-    def initialize_collectors(self):
-        """Initialize all enabled collectors."""
-        self.collectors = {}
-        
-        # Initialize Twitter collector if enabled
-        if self.config['twitter']['enabled']:
-            self.collectors['twitter'] = TwitterCollector(self.config)
-            
-        # Initialize YouTube collector if enabled
-        if self.config['youtube']['enabled']:
-            self.collectors['youtube'] = YouTubeCollector(self.config)
-            
-        # Initialize Reddit collector if enabled
-        if self.config['reddit']['enabled']:
-            self.collectors['reddit'] = RedditCollector(self.config)
-            
-        # Initialize other collectors as they are implemented
-        # if self.config['instagram']['enabled']:
-        #     self.collectors['instagram'] = InstagramCollector(self.config)
-        # etc.
-        
-    async def collect_data(self, song_id: str, days: int = 30) -> Dict[str, Any]:
-        """
-        Collect data for a specific song from all enabled platforms.
-        
-        Args:
-            song_id (str): Song identifier
-            days (int): Number of days to collect data for
-            
-        Returns:
-            Dict[str, Any]: Collected data from all platforms
-        """
-        self.logger.info(f"Starting data collection for song {song_id}")
-        
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=days)
-        
-        # Collect data from all enabled platforms concurrently
-        collection_tasks = []
-        for platform, collector in self.collectors.items():
-            task = asyncio.create_task(
-                self._collect_from_platform(collector, song_id, start_date, end_date)
-            )
-            collection_tasks.append(task)
-            
-        # Wait for all collection tasks to complete
-        results = await asyncio.gather(*collection_tasks, return_exceptions=True)
-        
-        # Process results
-        collected_data = {
-            'song_id': song_id,
-            'collection_date': datetime.now().isoformat(),
-            'time_range': {
-                'start': start_date.isoformat(),
-                'end': end_date.isoformat()
-            },
-            'platforms': {}
-        }
-        
-        for platform, result in zip(self.collectors.keys(), results):
-            if isinstance(result, Exception):
-                self.logger.error(f"Error collecting data from {platform}: {str(result)}")
-                collected_data['platforms'][platform] = {
-                    'error': str(result),
-                    'status': 'failed'
-                }
-            else:
-                collected_data['platforms'][platform] = {
-                    'data': result,
-                    'status': 'success'
-                }
-                
-        return collected_data
+    ]
     
-    async def _collect_from_platform(
-        self,
-        collector: Any,
-        song_id: str,
-        start_date: datetime,
-        end_date: datetime
-    ) -> Dict[str, Any]:
-        """
-        Collect data from a specific platform.
-        
-        Args:
-            collector: Platform-specific collector instance
-            song_id (str): Song identifier
-            start_date (datetime): Start date for data collection
-            end_date (datetime): End date for data collection
-            
-        Returns:
-            Dict[str, Any]: Collected data from the platform
-        """
-        try:
-            data = await collector.collect(song_id, start_date, end_date)
-            return data
-        except Exception as e:
-            self.logger.error(f"Error in {collector.__class__.__name__}: {str(e)}")
-            raise
+    # Run collectors
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    duration = (datetime.now() - start_time).total_seconds()
+    
+    # Process results
+    successful_platforms = [r['platform'] for r in results if isinstance(r, dict) and 'error' not in r]
+    failed_platforms = [r['platform'] for r in results if isinstance(r, dict) and 'error' in r]
+    
+    print(f"\nCollection completed in {duration:.2f} seconds")
+    print(f"Successful platforms: {', '.join(successful_platforms) if successful_platforms else 'None'}")
+    if failed_platforms:
+        print(f"Failed platforms: {', '.join(failed_platforms)}")
+    
+    if not successful_platforms:
+        print("\nError: All collectors failed. No data to analyze.")
+        return None
+    
+    # Save data and create networks
+    print("\nSaving data and creating network visualizations...")
+    saved_files = save_results(song_id, results)
+    
+    # Perform network analysis
+    print("\nPerforming network analysis...")
+    network_analysis = {}
+    for key, file_path in saved_files.items():
+        if key.endswith('_network'):
+            platform = key.replace('_network', '')
+            network_analysis[platform] = analyze_network(file_path)
+    
+    # Print analysis summary
+    print("\nNetwork Analysis Summary:")
+    for platform, metrics in network_analysis.items():
+        print(f"\n{platform.upper()} Network:")
+        print(f"- Nodes: {metrics['num_nodes']}")
+        print(f"- Edges: {metrics['num_edges']}")
+        print(f"- Network Density: {metrics['density']:.4f}")
+        print(f"- Average Clustering: {metrics['avg_clustering']:.4f}")
+        print(f"- Number of Connected Components: {len(metrics['connected_components'])}")
+    
+    return {
+        'saved_files': saved_files,
+        'network_analysis': network_analysis,
+        'collection_time': duration,
+        'successful_platforms': successful_platforms
+    }
 
-async def main():
-    """Main entry point for data collection."""
-    # Example usage
-    orchestrator = DataCollectionOrchestrator()
+def main():
+    """Main entry point for data collection and analysis."""
+    # Create necessary directories
+    for dir_name in ['raw', 'processed', 'networks', 'visualizations']:
+        Path(f"data/{dir_name}").mkdir(parents=True, exist_ok=True)
     
-    # Collect data for a specific song
-    song_id = "example_song_123"
-    data = await orchestrator.collect_data(song_id)
+    # Get song ID
+    print("\nSocial Media Music Data Collector and Network Analyzer")
+    print("--------------------------------------------------")
+    song_id = input("\nEnter song identifier (title, artist, or ID): ").strip()
     
-    # Save collected data
-    output_path = Path("data/raw") / f"{song_id}_all_platforms_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    with open(output_path, 'w') as f:
-        yaml.dump(data, f, default_flow_style=False)
-        
-    print(f"Data collection completed. Results saved to {output_path}")
+    if not song_id:
+        print("Error: Song identifier cannot be empty")
+        return
+    
+    # Run collection and analysis
+    asyncio.run(collect_and_analyze(song_id))
+    
+    print("\nAnalysis complete! Check the data/ directory for:")
+    print("- CSV files: data/processed/")
+    print("- Network files: data/networks/")
+    print("- Visualizations: data/visualizations/")
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    main() 

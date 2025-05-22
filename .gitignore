@@ -1,2 +1,3 @@
 music_analysis_env/*
 .env
+__pycache__/*

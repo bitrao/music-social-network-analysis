@@ -1,13 +1,13 @@
 # API Clients
-tweepy==4.15.0  # Twitter API client
 google-api-python-client==2.108.0  # YouTube API client
-praw==7.7.1  # Reddit API client
-TikTokApi==6.1.1  # TikTok API client
 
 # Data Processing
 panda # Data manipulation and CSV handling
 numpy==1.26.2  # Numerical computations
 python-dateutil==2.8.2  # Date parsing
+
+# Sentiment Analysis
+nltk
 
 # Network Analysis
 networkx==3.2.1  # Network analysis

@@ -1,28 +1,25 @@
-import pandas as pd
-import numpy as np
 from typing import Dict, Any, List, Optional
-import logging
 from pathlib import Path
 import json
 from datetime import datetime
 import re
+import nltk
+from nltk.tokenize import word_tokenize
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
 
-class DataProcessor:
-    """Processes and cleans YouTube comment data."""
+# Download necessary NLTK resources
+nltk.download('punkt')
+nltk.download('stopwords')
+nltk.download('wordnet')
+
+class DataPreprocessor:
+    """Preprocesses and cleans YouTube comment data."""
     
     def __init__(self):
-        """Initialize the data processor."""
-        self.logger = logging.getLogger(__name__)
-        self.setup_logging()
+        pass
         
-    def setup_logging(self):
-        """Set up logging configuration."""
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
-        
-    def process_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def preprocess_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Process YouTube comment data.
         
@@ -85,6 +82,21 @@ class DataProcessor:
         # Remove extra whitespace
         text = ' '.join(text.split())
         
+        
+        # Tokenize - simplified to avoid punkt_tab dependency
+        tokens = text.split()
+        
+        # Remove stopwords
+        stop_words = set(stopwords.words('english'))
+        tokens = [word for word in tokens if word not in stop_words]
+        
+        # Lemmatize
+        lemmatizer = WordNetLemmatizer()
+        tokens = [lemmatizer.lemmatize(word) for word in tokens]
+        
+        # Join tokens back into string
+        preprocessed_text = ' '.join(tokens)
+            
         return text
     
         

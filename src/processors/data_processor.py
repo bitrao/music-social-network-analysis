@@ -1,12 +1,13 @@
 from typing import Dict, Any, List, Optional
 from pathlib import Path
-import json
+import pandas as pd
 from datetime import datetime
 import re
 import nltk
 from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
+import html
 
 # Download necessary NLTK resources
 nltk.download('punkt')
@@ -14,54 +15,33 @@ nltk.download('stopwords')
 nltk.download('wordnet')
 
 class DataPreprocessor:
-    """Preprocesses and cleans YouTube comment data."""
+    """Preprocesses and cleans text data from a DataFrame."""
     
     def __init__(self):
         pass
         
-    def preprocess_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def preprocess_data(self, df: pd.DataFrame, text_column: str) -> pd.DataFrame:
         """
-        Process YouTube comment data.
+        Process text data from a DataFrame.
         
         Args:
-            data (Dict[str, Any]): Raw YouTube comment data
+            df (pd.DataFrame): Input DataFrame containing text data
+            text_column (str): Name of the column containing text to process
             
         Returns:
-            Dict[str, Any]: Processed data
+            pd.DataFrame: Processed DataFrame with cleaned text
         """
-        self.logger.info("Processing YouTube comment data")
+        # Create a copy to avoid modifying the original
+        processed_df = df.copy()
         
-        processed_data = {
-            'collection_date': data.get('collection_date', datetime.now().isoformat()),
-            'comments': []
-        }
+        # Clean the text column
+        processed_df[f'cleaned_{text_column}'] = processed_df[text_column].apply(self._clean_text)
         
-        for comment in data['comments']:
-            # Clean comment text
-            cleaned_text = self._clean_text(comment['text'])
-            
-            processed_comment = {
-                'id': comment['id'],
-                'text': cleaned_text,
-                'original_text': comment['text'],  # Keep original text for reference
-                'created_at': comment['created_at'],
-                'author': comment['author'],
-                'metrics': {
-                    'like_count': comment.get('like_count', 0),
-                    'reply_count': comment.get('reply_count', 0)
-                }
-            }
-            
-            processed_data['comments'].append(processed_comment)
-            
-        # Calculate engagement metrics
-        processed_data['engagement_metrics'] = self._calculate_engagement_metrics(processed_data['comments'])
-        
-        return processed_data
+        return processed_df
         
     def _clean_text(self, text: str) -> str:
         """
-        Clean text by removing URLs, special characters, etc.
+        Clean text while preserving emojis and emoticons for VADER sentiment analysis.
         
         Args:
             text (str): Text to clean
@@ -69,12 +49,17 @@ class DataPreprocessor:
         Returns:
             str: Cleaned text
         """
+        if not isinstance(text, str):
+            return ""
+            
+        # Decode HTML entities
+        text = html.unescape(text)
+        
+        # Remove HTML tags
+        text = re.sub(r'<[^>]+>', '', text)
+        
         # Remove URLs
         text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
-        
-        # Remove special characters and numbers
-        text = re.sub(r'[^\w\s]', '', text)
-        text = re.sub(r'\d+', '', text)
         
         # Convert to lowercase
         text = text.lower()
@@ -82,8 +67,7 @@ class DataPreprocessor:
         # Remove extra whitespace
         text = ' '.join(text.split())
         
-        
-        # Tokenize - simplified to avoid punkt_tab dependency
+        # Tokenize
         tokens = text.split()
         
         # Remove stopwords
@@ -97,15 +81,14 @@ class DataPreprocessor:
         # Join tokens back into string
         preprocessed_text = ' '.join(tokens)
             
-        return text
+        return preprocessed_text
     
-        
-    def save_processed_data(self, data: Dict[str, Any], output_path: Optional[Path] = None) -> Path:
+    def save_processed_data(self, df: pd.DataFrame, output_path: Optional[Path] = None) -> Path:
         """
-        Save processed data to disk.
+        Save processed DataFrame to CSV.
         
         Args:
-            data (Dict[str, Any]): Processed data
+            df (pd.DataFrame): Processed DataFrame
             output_path (Optional[Path]): Path to save data to
             
         Returns:
@@ -113,10 +96,10 @@ class DataPreprocessor:
         """
         if output_path is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_path = Path("data/processed") / f"youtube_comments_processed_{timestamp}.json"
+            output_path = Path("../data/processed") / f"processed_data_{timestamp}.csv"
             
-        with open(output_path, 'w') as f:
-            json.dump(data, f, indent=2, default=str)
+        # Create directory if it doesn't exist
+        output_path.parent.mkdir(parents=True, exist_ok=True)
             
-        self.logger.info(f"Processed data saved to {output_path}")
+        df.to_csv(output_path, index=False)
         return output_path 

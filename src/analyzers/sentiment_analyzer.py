@@ -3,12 +3,27 @@ import nltk
 from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
+from transformers import AutoModelForSequenceClassification, AutoTokenizer, AutoConfig
+import torch
+import numpy as np
+from scipy.special import softmax
+import logging
+import warnings
+
+# Suppress the specific warning about unused weights
+warnings.filterwarnings("ignore", message="Some weights of the model checkpoint.*")
 
 class SentimentAnalyzer:
     """Handles sentiment analysis and keyword extraction for text data."""
     
-    def __init__(self):
-        """Initialize the sentiment analyzer."""
+    def __init__(self, model_type: str = 'vader'):
+        """
+        Initialize the sentiment analyzer.
+        
+        Args:
+            model_type (str): Type of sentiment analyzer to use ('vader' or 'roberta')
+        """
+        self.model_type = model_type.lower()
         self.setup_nltk()
         self.setup_sentiment_analyzer()
         
@@ -28,12 +43,50 @@ class SentimentAnalyzer:
             nltk.download('vader_lexicon')
             
     def setup_sentiment_analyzer(self):
-        """Initialize the VADER sentiment analyzer."""
-        self.sentiment_analyzer = SentimentIntensityAnalyzer()
+        """Initialize the selected sentiment analyzer."""
+        if self.model_type == 'vader':
+            self.sentiment_analyzer = SentimentIntensityAnalyzer()
+        elif self.model_type == 'roberta':
+            try:
+                self.model_path = f"cardiffnlp/twitter-roberta-base-sentiment-latest"
+                self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
+                self.config = AutoConfig.from_pretrained(self.model_path)
+                self.model = AutoModelForSequenceClassification.from_pretrained(self.model_path)
+                
+                # Move model to GPU if available
+                self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                print(f"Using device: {self.device}")
+                self.model = self.model.to(self.device)
+
+            except Exception as e:
+                logging.error(f"Error loading RoBERTa model: {str(e)}")
+                raise
+        else:
+            raise ValueError("model_type must be either 'vader' or 'roberta'")
+            
+    def preprocess_text(self, text: str) -> str:
+        """
+        Preprocess text for RoBERTa model.
+        
+        Args:
+            text (str): Text to preprocess
+            
+        Returns:
+            str: Preprocessed text
+        """
+        if not isinstance(text, str):
+            return ""
+            
+        new_text = []
+        for t in text.split(" "):
+            t = '@user' if t.startswith('@') and len(t) > 1 else t
+            t = 'http' if t.startswith('http') else t
+            new_text.append(t)
+        return " ".join(new_text)
         
     def analyze_sentiment(self, text: str) -> Dict[str, Any]:
         """
-        Analyze sentiment of text using VADER.
+        Analyze sentiment of text using the selected model.
         
         Args:
             text (str): Text to analyze
@@ -41,13 +94,22 @@ class SentimentAnalyzer:
         Returns:
             Dict[str, Any]: Sentiment analysis results
         """
-        if not text.strip():
+        if not isinstance(text, str) or not text.strip():
             return {'label': 'neutral', 'score': 1.0}
             
-        # Get sentiment scores
+        try:
+            if self.model_type == 'vader':
+                return self._analyze_vader(text)
+            else:
+                return self._analyze_roberta(text)
+        except Exception as e:
+            logging.error(f"Error in sentiment analysis: {str(e)}")
+            return {'label': 'neutral', 'score': 1.0}
+            
+    def _analyze_vader(self, text: str) -> Dict[str, Any]:
+        """Analyze sentiment using VADER."""
         scores = self.sentiment_analyzer.polarity_scores(text)
         
-        # Determine the label based on compound score
         compound_score = scores['compound']
         if compound_score >= 0.05:
             label = 'positive'
@@ -58,12 +120,46 @@ class SentimentAnalyzer:
             
         return {
             'label': label,
-            'score': abs(compound_score),  # Use absolute value for score
+            'score': abs(compound_score),
             'details': {
                 'positive': scores['pos'],
                 'negative': scores['neg'],
                 'neutral': scores['neu'],
                 'compound': scores['compound']
+            }
+        }
+        
+    def _analyze_roberta(self, text: str) -> Dict[str, Any]:
+        """Analyze sentiment using RoBERTa."""
+        text = self.preprocess_text(text)
+        
+        # Tokenize and get model output
+        encoded_input = self.tokenizer(text, return_tensors='pt', truncation=True, max_length=512)
+        # Move input tensors to the same device as the model
+        encoded_input = {k: v.to(self.device) for k, v in encoded_input.items()}
+        
+        with torch.no_grad():
+            output = self.model(**encoded_input)
+        
+        scores = output[0][0].detach().cpu().numpy()  # Move back to CPU for numpy operations
+        scores = softmax(scores)
+        
+        # Get the highest scoring label
+        ranking = np.argsort(scores)
+        ranking = ranking[::-1]
+        label_idx = ranking[0]
+        label = self.config.id2label[label_idx].lower()
+        score = float(scores[label_idx])
+        
+        
+        return {
+            'label': label,
+            'score': score,
+            'details': {
+                'positive': float(scores[2]),  # RoBERTa order: negative, neutral, positive
+                'negative': float(scores[0]),
+                'neutral': float(scores[1]),
+                'compound': score
             }
         }
         
@@ -127,4 +223,4 @@ class SentimentAnalyzer:
             'neutral_percentage': (sentiment_counts['neutral'] / total_items) * 100,
             'average_sentiment_score': total_sentiment_score / total_items,
             'average_compound_score': total_compound_score / total_items
-        } 
+        }

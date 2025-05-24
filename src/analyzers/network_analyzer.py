@@ -4,16 +4,17 @@ import json
 from pathlib import Path
 import numpy as np
 from collections import defaultdict
+import nx_cugraph as nxcg
 
 class NetworkAnalyzer:
-    """Analyzes networks and computes various network metrics."""
+    """Analyzes networks and computes various network metrics using GPU acceleration."""
     
     def __init__(self):
         pass
         
-    def compute_network_metrics(self, network: nx.Graph) -> Dict[str, Any]:
+    def compute_network_metrics(self, network: nx.Graph, centrality_metrics: bool = False) -> Dict[str, Any]:
         """
-        Compute various network metrics for the given network.
+        Compute various network metrics for the given network using GPU acceleration where available.
         
         Args:
             network (nx.Graph): Network to analyze
@@ -23,40 +24,61 @@ class NetworkAnalyzer:
         """
         metrics = {}
         
-        # Basic network metrics
+        # Basic network metrics (using NetworkX as nx_cugraph doesn't have these)
         metrics['num_nodes'] = network.number_of_nodes()
         metrics['num_edges'] = network.number_of_edges()
         metrics['density'] = nx.density(network)
         
-        # Connected components
-        if isinstance(network, nx.Graph):
-            metrics['num_components'] = nx.number_connected_components(network)
-            metrics['largest_component_size'] = len(max(nx.connected_components(network), key=len))
-        else:  # For directed graphs
-            metrics['num_components'] = nx.number_weakly_connected_components(network)
-            metrics['largest_component_size'] = len(max(nx.weakly_connected_components(network), key=len))
-        
-        # Centrality metrics
-        metrics['degree_centrality'] = nx.degree_centrality(network)
-        metrics['betweenness_centrality'] = nx.betweenness_centrality(network)
-        metrics['closeness_centrality'] = nx.closeness_centrality(network)
-        
-        # For directed networks
+        # Convert to appropriate graph type for nx_cugraph
+        # For connected components, we need to use undirected graph
         if isinstance(network, nx.DiGraph):
-            metrics['in_degree_centrality'] = nx.in_degree_centrality(network)
-            metrics['out_degree_centrality'] = nx.out_degree_centrality(network)
-            metrics['pagerank'] = nx.pagerank(network)
+            g_undirected = nxcg.Graph()
+            g_undirected.add_edges_from(network.edges())
+            # Create a NetworkX undirected graph for centrality calculations
+            nx_undirected = nx.Graph()
+            nx_undirected.add_edges_from(network.edges())
+        else:
+            g_undirected = nxcg.Graph()
+            g_undirected.add_edges_from(network.edges())
+            nx_undirected = network
         
-        # Clustering and community metrics
+        # Connected components (using undirected graph)
         if isinstance(network, nx.Graph):
-            metrics['average_clustering'] = nx.average_clustering(network)
-            metrics['transitivity'] = nx.transitivity(network)
+            metrics['num_components'] = nxcg.number_connected_components(g_undirected)
+            metrics['largest_component_size'] = len(max(nxcg.connected_components(g_undirected), key=len))
+        else:  # For directed graphs
+            metrics['num_components'] = nxcg.number_weakly_connected_components(g_undirected)
+            metrics['largest_component_size'] = len(max(nxcg.weakly_connected_components(g_undirected), key=len))
+        
+        if centrality_metrics:
+            try:
+                # Use the undirected graph for centrality calculations
+                metrics['degree_centrality'] = nx.degree_centrality(nx_undirected)
+                metrics['betweenness_centrality'] = nx.betweenness_centrality(nx_undirected)
+                metrics['closeness_centrality'] = nx.closeness_centrality(nx_undirected)
+                
+                # For directed networks, use the original directed graph
+                if isinstance(network, nx.DiGraph):
+                    metrics['in_degree_centrality'] = nx.in_degree_centrality(network)
+                    metrics['out_degree_centrality'] = nx.out_degree_centrality(network)
+                    metrics['pagerank'] = nx.pagerank(network)
+            except Exception as e:
+                print(f"Warning: Some centrality metrics could not be computed: {str(e)}")
+            
+        # Clustering and community metrics (using NetworkX as nx_cugraph doesn't have these)
+        if isinstance(network, nx.Graph):
+            try:
+                # Use the undirected graph for clustering calculations
+                metrics['average_clustering'] = nx.average_clustering(nx_undirected)
+                metrics['transitivity'] = nx.transitivity(nx_undirected)
+            except Exception as e:
+                print(f"Warning: Clustering metrics could not be computed: {str(e)}")
         
         return metrics
     
     def compute_community_metrics(self, network: nx.Graph) -> Dict[str, Any]:
         """
-        Compute community detection metrics using Louvain method.
+        Compute community detection metrics using NetworkX's Louvain method.
         
         Args:
             network (nx.Graph): Network to analyze
@@ -65,17 +87,20 @@ class NetworkAnalyzer:
             Dict[str, Any]: Dictionary containing community metrics
         """
         try:
-            import community as community_louvain
+            import community  # python-louvain package
         except ImportError:
             print("Please install python-louvain package for community detection")
             return {}
         
         # Convert to undirected graph if needed
         if isinstance(network, nx.DiGraph):
-            network = network.to_undirected()
+            g = nx.Graph()
+            g.add_edges_from(network.edges())
+        else:
+            g = network
         
-        # Detect communities
-        partition = community_louvain.best_partition(network)
+        # Detect communities using Louvain method
+        partition = community.best_partition(g)
         
         # Compute community metrics
         metrics = {
@@ -90,32 +115,6 @@ class NetworkAnalyzer:
         
         return metrics
     
-    def compute_semantic_metrics(self, network: nx.Graph) -> Dict[str, Any]:
-        """
-        Compute semantic-specific metrics for the network.
-        
-        Args:
-            network (nx.Graph): Network to analyze
-            
-        Returns:
-            Dict[str, Any]: Dictionary containing semantic metrics
-        """
-        metrics = {}
-        
-        # Average edge weight (semantic similarity)
-        if network.edges():
-            weights = [d['weight'] for _, _, d in network.edges(data=True)]
-            metrics['avg_similarity'] = np.mean(weights)
-            metrics['max_similarity'] = np.max(weights)
-            metrics['min_similarity'] = np.min(weights)
-        
-        # Most similar comment pairs
-        if network.edges():
-            edges_with_weights = [(u, v, d['weight']) for u, v, d in network.edges(data=True)]
-            edges_with_weights.sort(key=lambda x: x[2], reverse=True)
-            metrics['top_similar_pairs'] = edges_with_weights[:5]
-        
-        return metrics
     
     def compute_user_metrics(self, network: nx.Graph) -> Dict[str, Any]:
         """

@@ -1,184 +1,258 @@
 import networkx as nx
-from typing import Dict, Any, List, Optional, Tuple
-import json
+from typing import Dict, Any
 from pathlib import Path
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 from collections import defaultdict
+import pandas as pd
 from .network_analyzer import NetworkAnalyzer
+import nx_cugraph as nxcg
 
 class NetworkCreator:
-    """Creates various types of networks from YouTube comment data."""
+    """Creates various types of networks from YouTube comment data using GPU acceleration."""
     
     def __init__(self):
-        self.comment_network = nx.DiGraph()
-        self.video_comment_network = nx.DiGraph()
-        self.semantic_network = nx.Graph()
-        self.category_network = nx.DiGraph()
+        self.comment_network = nxcg.DiGraph()
+        self.video_comment_network = nxcg.DiGraph()
+        self.semantic_network = nxcg.Graph()
+        self.category_network = nxcg.DiGraph()
+        self.topic_network = nxcg.DiGraph()
         self.analyzer = NetworkAnalyzer()
         
-    def create_comment_reply_network(self, data: Dict[str, Any]) -> nx.DiGraph:
+    def create_comment_reply_network(self, data: pd.DataFrame) -> nx.DiGraph:
         """
-        Create a network of comments and their replies.
+        Create a network of authors and their reply relationships.
         
         Args:
-            data (Dict[str, Any]): Processed comment data
+            data (pd.DataFrame): Processed comment data with columns:
+                - id: comment ID
+                - text: comment text
+                - author: comment author
+                - created_at: timestamp
+                - likes: comment likes
+                - parent_id: ID of parent comment (if reply)
             
         Returns:
-            nx.DiGraph: Directed graph of comments and replies
+            nx.DiGraph: Directed graph of authors and their reply relationships
         """
         self.comment_network.clear()
         
-        # Add all comments as nodes
-        for comment in data['comments']:
+        # Create a mapping of comment IDs to authors
+        comment_to_author = {}
+        for _, comment in data.iterrows():
+            comment_to_author[comment['id']] = comment['author']
+            
+        # Add all unique authors as nodes
+        unique_authors = data['author'].unique()
+        for author in unique_authors:
             self.comment_network.add_node(
-                comment['id'],
-                text=comment['text'],
-                author=comment['author'],
-                created_at=comment['created_at'],
-                metrics=comment['metrics']
+                author,
+                type='author'
             )
             
-            # Add edges for replies
-            if 'replies' in comment:
-                for reply in comment['replies']:
+        # Add edges for replies between authors
+        for _, comment in data.iterrows():
+            if pd.notna(comment.get('parent_id')):
+                parent_author = comment_to_author.get(comment['parent_id'])
+                if parent_author is not None:
                     self.comment_network.add_edge(
-                        comment['id'],
-                        reply['id'],
-                        relationship='reply'
+                        parent_author,
+                        comment['author'],
+                        relationship='replied_to'
                     )
                     
         return self.comment_network
     
-    def create_video_comment_network(self, data: Dict[str, Any]) -> nx.DiGraph:
+    def create_video_comment_network(self, data: pd.DataFrame) -> nx.DiGraph:
         """
-        Create a network of videos and their comments.
+        Create a network of videos and their comment authors.
+        Authors can be connected to multiple videos if they commented on different videos.
+        This creates a bipartite network where authors can bridge between different videos.
         
         Args:
-            data (Dict[str, Any]): Processed comment data
+            data (pd.DataFrame): Processed comment data with columns:
+                - video_id: ID of the video
+                - video_title: title of the video
+                - video_metrics: metrics of the video
+                - author: comment author
             
         Returns:
-            nx.DiGraph: Directed graph of videos and comments
+            nx.DiGraph: Directed graph of videos and comment authors, where:
+                - Each video is connected to its commenters
+                - Authors can be connected to multiple videos
+                - Videos are not connected to each other
         """
         self.video_comment_network.clear()
         
-        # Add video as central node
-        video_id = data.get('video_id', 'unknown')
-        self.video_comment_network.add_node(
-            video_id,
-            type='video',
-            title=data.get('video_title', ''),
-            metrics=data.get('video_metrics', {})
-        )
+        # Group data by video
+        video_groups = data.groupby('video_id')
         
-        # Add comments and connect to video
-        for comment in data['comments']:
+        # Process each video independently
+        for video_id, video_data in video_groups:
+            # Add video node
             self.video_comment_network.add_node(
-                comment['id'],
-                type='comment',
-                text=comment['text'],
-                author=comment['author']
-            )
-            self.video_comment_network.add_edge(
                 video_id,
-                comment['id'],
-                relationship='has_comment'
+                type='video',
+                title=video_data['video_title'].iloc[0],
             )
+            
+            # Get unique authors who commented on this video
+            unique_authors = video_data['author'].unique()
+            
+            # Add author nodes and connect to video
+            # Note: If an author commented on multiple videos, they will have multiple edges
+            for author in unique_authors:
+                # Add author node if it doesn't exist yet
+                if not self.video_comment_network.has_node(author):
+                    self.video_comment_network.add_node(
+                        author,
+                        type='author'
+                    )
+                # Connect author to this video (edge points TO video)
+                self.video_comment_network.add_edge(
+                    author,
+                    video_id,
+                    relationship='commented_on'
+                )
             
         return self.video_comment_network
     
-    def create_semantic_network(self, data: Dict[str, Any], similarity_threshold: float = 0.3) -> nx.Graph:
+    def create_category_network(self, data: pd.DataFrame) -> nx.DiGraph:
         """
-        Create a semantic network based on comment similarity.
+        Create a hierarchical network of categories -> videos -> comment authors.
+        Authors can be connected to multiple videos if they commented on different videos.
         
         Args:
-            data (Dict[str, Any]): Processed comment data
-            similarity_threshold (float): Minimum similarity score to create an edge
+            data (pd.DataFrame): Processed comment data with columns:
+                - category: video category
+                - video_id: ID of the video
+                - video_title: title of the video
+                - author: comment author
             
         Returns:
-            nx.Graph: Undirected graph of semantically related comments
-        """
-        self.semantic_network.clear()
-        
-        # Extract comment texts
-        comments = [comment['text'] for comment in data['comments']]
-        comment_ids = [comment['id'] for comment in data['comments']]
-        
-        # Create TF-IDF vectors
-        vectorizer = TfidfVectorizer()
-        tfidf_matrix = vectorizer.fit_transform(comments)
-        
-        # Calculate similarity matrix
-        similarity_matrix = cosine_similarity(tfidf_matrix)
-        
-        # Add nodes
-        for comment_id, comment in zip(comment_ids, data['comments']):
-            self.semantic_network.add_node(
-                comment_id,
-                text=comment['text'],
-                author=comment['author']
-            )
-        
-        # Add edges for similar comments
-        for i in range(len(comment_ids)):
-            for j in range(i + 1, len(comment_ids)):
-                if similarity_matrix[i, j] > similarity_threshold:
-                    self.semantic_network.add_edge(
-                        comment_ids[i],
-                        comment_ids[j],
-                        weight=similarity_matrix[i, j]
-                    )
-                    
-        return self.semantic_network
-    
-    def create_category_network(self, data: Dict[str, Any]) -> nx.DiGraph:
-        """
-        Create a network of categories -> videos -> comments.
-        
-        Args:
-            data (Dict[str, Any]): Processed comment data
-            
-        Returns:
-            nx.DiGraph: Directed graph of categories, videos, and comments
+            nx.DiGraph: Directed graph where:
+                - Categories are connected to their videos
+                - Videos are connected to their commenters
+                - Authors can be connected to multiple videos
+                - Videos contain category information
         """
         self.category_network.clear()
         
-        # Add category node
-        category = data.get('category', 'unknown')
-        self.category_network.add_node(
-            category,
-            type='category'
-        )
+        # Group data by category
+        category_groups = data.groupby('category')
         
-        # Add video node and connect to category
-        video_id = data.get('video_id', 'unknown')
-        self.category_network.add_node(
-            video_id,
-            type='video',
-            title=data.get('video_title', '')
-        )
-        self.category_network.add_edge(
-            category,
-            video_id,
-            relationship='contains'
-        )
-        
-        # Add comments and connect to video
-        for comment in data['comments']:
+        # Process each category
+        for category, category_data in category_groups:
+            # Add category node
             self.category_network.add_node(
-                comment['id'],
-                type='comment',
-                text=comment['text'],
-                author=comment['author']
-            )
-            self.category_network.add_edge(
-                video_id,
-                comment['id'],
-                relationship='has_comment'
+                category,
+                type='category'
             )
             
+            # Group videos within this category
+            video_groups = category_data.groupby('video_id')
+            
+            # Process each video in the category
+            for video_id, video_data in video_groups:
+                # Add video node with category info
+                self.category_network.add_node(
+                    video_id,
+                    type='video',
+                    title=video_data['video_title'].iloc[0],
+                    category=category
+                )
+                
+                # Connect video to its category
+                self.category_network.add_edge(
+                    category,
+                    video_id,
+                    relationship='contains'
+                )
+                
+                # Get unique authors who commented on this video
+                unique_authors = video_data['author'].unique()
+                
+                # Add author nodes and connect to video
+                # Note: If an author commented on multiple videos, they will have multiple edges
+                for author in unique_authors:
+                    # Add author node if it doesn't exist yet
+                    if not self.category_network.has_node(author):
+                        self.category_network.add_node(
+                            author,
+                            type='author'
+                        )
+
+                    self.category_network.add_edge(
+                        author,
+                        video_id,
+                        relationship='commented_on'
+                    )
+            
         return self.category_network
+    
+    def create_topic_network(self, data: pd.DataFrame) -> nx.DiGraph:
+        """
+        Create a network connecting topics, comments, and authors.
+        Comments are connected to their topics, and comments from the same author are connected.
+        
+        Args:
+            data (pd.DataFrame): Processed comment data with columns:
+                - id: comment ID
+                - text: comment text
+                - author: comment author
+                - topic: topic of the comment
+                - category: category of the video
+            
+        Returns:
+            nx.DiGraph: Directed graph where:
+                - Topics are connected to their comments
+                - Comments contain author and category information
+                - Comments from the same author are connected (undirected)
+        """
+        self.topic_network.clear()
+        
+        # Group comments by author to connect comments from same author
+        author_comments = defaultdict(list)
+        for _, comment in data.iterrows():
+            author_comments[comment['author']].append(comment['id'])
+        
+        # Add all topics as nodes
+        unique_topics = data['topic'].unique()
+        for topic in unique_topics:
+            self.topic_network.add_node(
+                topic,
+                type='topic'
+            )
+        
+        # Add comments and connect to topics
+        for _, comment in data.iterrows():
+            # Add comment node with metadata
+            self.topic_network.add_node(
+                comment['id'],
+                type='comment',
+                author=comment['author'],
+                category=comment['category'],
+                text=comment['text']
+            )
+            
+            # Connect comment to its topic
+            self.topic_network.add_edge(
+                comment['id'],
+                comment['topic'],
+                relationship='belongs_to'
+            )
+        
+        # Connect comments from same author (undirected edges)
+        for author, comment_ids in author_comments.items():
+            # Create edges between all pairs of comments from same author
+            for i in range(len(comment_ids)):
+                for j in range(i + 1, len(comment_ids)):
+                    self.topic_network.add_edge(
+                        comment_ids[i],
+                        comment_ids[j],
+                        relationship='same_author'
+                    )
+        
+        return self.topic_network
     
     def save_network(self, network: nx.Graph, output_path: Path) -> None:
         """
@@ -190,15 +264,3 @@ class NetworkCreator:
         """
         nx.write_graphml(network, output_path)
     
-    def analyze_network(self, network: nx.Graph, is_semantic: bool = False) -> Dict[str, Any]:
-        """
-        Analyze a network using the NetworkAnalyzer.
-        
-        Args:
-            network (nx.Graph): Network to analyze
-            is_semantic (bool): Whether this is a semantic network
-            
-        Returns:
-            Dict[str, Any]: Network metrics
-        """
-        return self.analyzer.get_network_summary(network, is_semantic)

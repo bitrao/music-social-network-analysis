@@ -8,7 +8,7 @@ python-dateutil==2.8.2  # Date parsing
 
 # Sentiment Analysis
 nltk==3.8.1
-transformers==4.36.2  # Hugging Face Transformers
+transformers==4.41.0  # Hugging Face Transformers
 torch  # PyTorch for deep learning
 scipy==1.12.0  # Scientific computing
 
@@ -27,3 +27,11 @@ wordcloud>=1.8.1  # Word cloud generation
 
 # Utilities
 python-dotenv==1.0.0  # Environment variable managementipykernel
+
+# BERTopic and Dependencies
+huggingface-hub 
+sentence-transformers >= 3.2.0
+bertopic
+umap-learn
+hdbscan
+nbformat>=4.2.0 

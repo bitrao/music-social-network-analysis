@@ -50,18 +50,13 @@ music-social-network-analysis/
 - YouTube Data API credentials
 
 ## Key Findings
+
 ### Topic Modeling
+
 Two distinct topic modeling methods were employed: 
 - BERTopic, a modern transformer-based technique, was used to extract 20 granular topics by leveraging BERT embeddings and class-based TF-IDF scores. 
 - LDA, a probabilistic model based on word co-occurrence, was used to extract 7 broader thematic clusters for comparison.
-<div style="display: flex; justify-content: center;">
-  <div style="flex: 1; text-align: center;">
-    <img src="https://github.com/bitrao/music-social-network-analysis/blob/main/images/bertopic_topics.png?raw=true" alt="bertopic_topics" style="max-width: 100%;"/>
-  </div>
-  <div style="flex: 1; text-align: center;">
-    <img src="https://github.com/bitrao/music-social-network-analysis/blob/main/images/lda_topics.png?raw=true" alt="lda_topics" style="max-width: 100%;"/>
-</div>
-#### Topics:
+
 <div style="display: flex; justify-content: center;">
   <div style="flex: 1; text-align: center;">
     <img src="https://github.com/bitrao/music-social-network-analysis/blob/main/images/wordcloud_categories.png?raw=true" alt="wordcloud_categories" style="max-width: 100%;"/>
@@ -74,7 +69,19 @@ Two distinct topic modeling methods were employed:
   </div>
 </div>
 
+#### Topics:
+
+<div style="display: flex; justify-content: center;">
+  <div style="flex: 1; text-align: center;">
+    <img src="https://github.com/bitrao/music-social-network-analysis/blob/main/images/bertopic_topics.png?raw=true" alt="bertopic_topics" style="max-width: 100%;"/>
+  </div>
+  <div style="flex: 1; text-align: center;">
+    <img src="https://github.com/bitrao/music-social-network-analysis/blob/main/images/lda_topics.png?raw=true" alt="lda_topics" style="max-width: 100%;"/>
+</div>
+
+
 ### Sentiment Analysis
+
 This section explores sentiment analysis using two distinct approaches: VADER (Valence Aware Dictionary and sEntiment Reasoner) and pre-trained RoBERTa.
    <img src="https://github.com/bitrao/music-social-network-analysis/blob/main/images/sentiment_distribution_comparison.png?raw=true" alt="sentiment_distribution_comparison"/>
 Both models generally concurred on the overall trend: "neutral" comments were the most frequent, followed by "positive," and then "negative." RoBERTa appeared to identify a greater number of neutral comments than VADER while VADER identified slightly more positive comments than RoBERTa The counts for negative sentiment were relatively similar between the two models. For the actual results, it can be seen that not only RoBERTa captures the sentiment of emoji much better than VADER but also due to being pre trained with millions of tweets the vocabulary of RoBERTa is more sentimentally precise. 
@@ -82,6 +89,7 @@ Both models generally concurred on the overall trend: "neutral" comments were th
 Across all analyzed dimensions—individual topics, different video categories, and temporal trends—a recurring pattern emerged: neutral sentiment generally holds a significant, often leading, share, closely followed by positive sentiment. Negative sentiment, while consistently identifiable, typically constitutes the smallest proportion of comments. This broad observation suggests a largely favorable or at least non-negative engagement with the song.
 
 ### Social Network Analysis
+
 <div style="display: flex; justify-content: center;">
   <div style="flex: 1; text-align: center;">
     <img src="https://github.com/bitrao/music-social-network-analysis/blob/main/images/comments_reply_network.png?raw=true" alt="comments_reply_network" style="max-width: 100%;"/>
@@ -93,6 +101,7 @@ Across all analyzed dimensions—individual topics, different video categories, 
     <img src="https://github.com/bitrao/music-social-network-analysis/blob/main/images/video_category_network.png?raw=true" alt="video_category_network" style="max-width: 100%;"/>
   </div>
 </div>
+
 ## Future Work
 - Enhanced sentiment analysis
 - Real-time comment monitoring

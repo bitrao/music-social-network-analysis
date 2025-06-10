@@ -55,8 +55,8 @@ class NetworkCreator:
                 parent_author = comment_to_author.get(comment['parent_id'])
                 if parent_author is not None:
                     self.comment_network.add_edge(
-                        parent_author,
                         comment['author'],
+                        parent_author,
                         relationship='replied_to'
                     )
                     
